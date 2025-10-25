@@ -300,7 +300,7 @@
 
       const [credits, setCredits] = React.useState(() => {
         const saved = localStorage.getItem("demo_credits");
-        return saved ? Number(saved) : 20;
+        return saved ? Number(saved) : 100;
       });
       const [plan, setPlan] = React.useState(() => {
         const saved = localStorage.getItem("demo_plan");
