@@ -10,4 +10,4 @@ Demo generador musical WebAudio con créditos y planes (sin build).
 1. Sube estos archivos al repo.
 2. En *Settings → Pages*, selecciona **Source: GitHub Actions**.
 3. Revisa la pestaña **Actions** y espera a que termine el workflow.
-4. Tu sitio quedará disponible en ` https://ivanplaysyt.github.io/music-web/`.
+4. Tu sitio quedará disponible en https://ivanplaysyt.github.io/music-web/
