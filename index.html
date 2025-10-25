@@ -69,8 +69,7 @@
       function scheduleBassSynth(time,freq){ const osc=ctx.createOscillator(); const g=ctx.createGain(); osc.type=style==="Hardbass"?"square":"sawtooth"; osc.frequency.setValueAtTime(freq/2,time); g.gain.setValueAtTime(0.0001,time); g.gain.linearRampToValueAtTime(0.5,time+0.01); g.gain.exponentialRampToValueAtTime(0.0001,time+beat*0.95); osc.connect(g).connect(busBass.in); osc.start(time); osc.stop(time+beat); }
       function scheduleLeadSynth(time,freq){ const osc=ctx.createOscillator(); const g=ctx.createGain(); osc.type=(style==="Trance"||style==="EDM")?"sawtooth":"triangle"; osc.frequency.setValueAtTime(freq,time); g.gain.setValueAtTime(0.0001,time); g.gain.linearRampToValueAtTime(0.25,time+0.01); g.gain.exponentialRampToValueAtTime(0.0001,time+beat*0.5); osc.connect(g).connect(busLead.in); osc.start(time); osc.stop(time+beat*0.5); }
       function playSample(buf,toBus,time,{gain=1,detune=0}={}){ if(!buf) return; const src=ctx.createBufferSource(); const g=ctx.createGain(); src.buffer=buf; if(src.detune) src.detune.value=detune; g.gain.value=gain; src.connect(g).connect(toBus.in); src.start(time); }
-      function duckOn(time){duck.gain.cancelScheduledValues(time);duck.gain.setValueAtTime(duck.gain.value,time);duck.gain.linearRampToValueAtTime(0.6,time+0.005);duck.gain.exponentialRampToValueAtTime(1.0,time+0.22);}
-      
+      function duckOn(time){duck.gain.cancelScheduledValues(time);duck.gain.setValueAtTime(duck.gain.value,time);duck.gain.linearRampToValueAtTime(0.6,time+0.005);duck.gain.exponentialRampToValueAtTime(1.0,time+0.22);}      
   </script>
 </body>
 </html>
