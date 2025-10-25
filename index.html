@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Music Web — Demo</title>
+
+  <!-- TailwindCSS por CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React 18 + ReactDOM UMD (CDN) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel para transformar JSX en el navegador -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <meta name="description" content="Demo generador musical WebAudio con créditos y planes" />
+</head>
+<body class="bg-neutral-950 text-neutral-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ====== Constantes compartidas ======
+    const STEPS_PER_BAR = 16;       // pasos por compás
+    const CREDITS_PER_SONG = 10;    // coste por canción
+
+    // Planes (demo) — créditos mensuales y precio
+    const PLANS = {
+      free:     { name: "Free",     price: 0,  monthlyCredits: 0    },
+      pro:      { name: "Pro",      price: 10, monthlyCredits: 2500 },
+      ultimate: { name: "Ultimate", price: 30, monthlyCredits: 9000 },
+    };
+
+    // Escalas por estilo
+    const SCALES = {
+      "Bumping 2000": [55, 82.41, 110, 164.81, 220, 329.63, 440],
+      "Trance":       [65.41, 98, 130.81, 196, 261.63, 392, 523.25],
+      "LoFi":         [73.42, 110, 146.83, 185, 220, 261.63, 293.66],
+      "Pop":          [82.41, 123.47, 164.81, 185, 246.94, 329.63, 392],
+      "Hardbass":     [55, 73.42, 110, 146.83, 220, 293.66, 440],
+      "Deep House":   [55, 82.41, 110, 164.81, 220, 277.18, 329.63],
+      "Electronica":  [65.41, 92.5, 130.81, 185, 261.63, 311.13, 392],
+      "EDM":          [58.27, 87.31, 116.54, 174.61, 233.08, 349.23, 466.16],
+      "Techno":       [65.41, 98, 130.81, 196, 261.63, 392, 523.25],
+      "Drum & Bass":  [55, 110, 165, 220, 330, 440, 660],
+      "Trap":         [61.74, 92.5, 123.47, 184.99, 246.94, 277.18, 369.99],
+      "Reggaeton":    [73.42, 110, 146.83, 196, 220, 261.63, 329.63],
+      "Synthwave":    [65.41, 98, 130.81, 196, 261.63, 392, 523.25],
+    };
+
+    // ====== Utils ======
+    const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+    async function decodeSample(file) {
+      if (!file) return null;
+      const arrayBuf = await file.arrayBuffer();
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx({ sampleRate: 44100 });
+      const buffer = await ctx.decodeAudioData(arrayBuf.slice(0));
+      await ctx.close();
+      return buffer; // se clona al contexto del motor luego
+    }
+
+    // ====== Motor de render (WebAudio + MediaRecorder) ======
+    async function renderTrackWithWebAudio({ durationSec, bpm, style, samples, lyrics, speakLyrics }) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx({ sampleRate: 44100 });
+
+      const master = ctx.createGain();
+      master.gain.value = 0.85;
+
+      const mediaDest = ctx.createMediaStreamDestination();
+      master.connect(mediaDest);
+      master.connect(ctx.destination);
+
+      const beat = 60 / clamp(bpm, 60, 200);
+      const bars = Math.max(1, Math.floor(durationSec / (beat * 4)));
+      const start = ctx.currentTime + 0.05;
+      const endTime = start + durationSec;
+
+      function playSample(buf, time, { gain = 1, detune = 0 } = {}) {
+        if (!buf) return;
+        const src = ctx.createBufferSource();
+        const g = ctx.createGain();
+        src.buffer = buf;
+        if (src.detune) src.detune.value = detune;
+        g.gain.value = gain;
+        src.connect(g).connect(master);
+        src.start(time);
+      }
+
+      async function ensureBuffer(localBuf) {
+        if (!localBuf) return null;
+        const tmp = ctx.createBuffer(localBuf.numberOfChannels, localBuf.length, localBuf.sampleRate);
+        for (let ch = 0; ch < localBuf.numberOfChannels; ch++) {
+          tmp.getChannelData(ch).set(localBuf.getChannelData(ch));
+        }
+        return tmp;
+      }
+
+      const kick  = await ensureBuffer(samples.kick);
+      const snare = await ensureBuffer(samples.snare);
+      const hihat = await ensureBuffer(samples.hihat);
+      const bass  = await ensureBuffer(samples.bass);
+      const vox   = await ensureBuffer(samples.vox);
+
+      function scheduleKickSynth(time) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(150, time);
+        osc.frequency.exponentialRampToValueAtTime(45, time + 0.11);
+        gain.gain.setValueAtTime(0.95, time);
+        gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.14);
+        osc.connect(gain).connect(master);
+        osc.start(time);
+        osc.stop(time + 0.16);
+      }
+      function scheduleHatSynth(time) {
+        const noise = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
+        const data = noise.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource();
+        src.buffer = noise;
+        const bp = ctx.createBiquadFilter();
+        bp.type = "highpass"; bp.frequency.value = 8000; bp.Q.value = 0.7;
+        const g = ctx.createGain(); g.gain.value = 0.2;
+        src.connect(bp).connect(g).connect(master);
+        src.start(time);
+        src.stop(time + 0.05);
+      }
+
+      const scale = SCALES[style] || SCALES["Bumping 2000"]; // única declaración
+
+      const stepsPerBar = STEPS_PER_BAR;
+      const stepDur = (beat * 4) / stepsPerBar;
+
+      const patt = {
+        kick: {
+          "Hardbass":   [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+          "Deep House": [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+          "EDM":        [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+          "Techno":     [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+          "Drum & Bass":[1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,0,0],
+          "Trap":       [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0],
+          "Reggaeton":  [1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,0,0],
+          default:      [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+        },
+        snare: {
+          "Hardbass":   [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+          "Deep House": [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+          "EDM":        [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+          "Techno":     [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+          "Drum & Bass":[0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+          "Trap":       [0,0,0,0, 0,1,0,1, 0,0,0,0, 0,1,0,1],
+          "Reggaeton":  [0,0,0,1, 0,0,0,0, 0,0,0,1, 0,0,0,0],
+          default:      [0,0,0,0, 0,1,0,0, 0,0,0,0, 0,1,0,0],
+        },
+        hihat: {
+          "Hardbass":   Array(16).fill(0).map((_,i)=> i%2===1?1:0),
+          "Deep House": Array(16).fill(0).map((_,i)=> i%2===1?1:0),
+          "EDM":        Array(16).fill(1),
+          "Techno":     Array(16).fill(0).map((_,i)=> i%2===1?1:0),
+          "Drum & Bass":Array(16).fill(0).map((_,i)=> i%2===1?1:0),
+          "Trap":       [1,0,1,0, 1,1,0,1, 0,1,0,1, 1,0,1,1],
+          "Reggaeton":  [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0],
+          default:      Array(16).fill(0).map((_,i)=> i%2===1?1:0),
+        }
+      };
+
+      function scheduleBassSynth(time, freq) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = style === "Hardbass" ? "square" : "sawtooth";
+        osc.frequency.setValueAtTime(freq/2, time);
+        g.gain.setValueAtTime(0.0001, time);
+        g.gain.linearRampToValueAtTime(0.4, time + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, time + beat*0.95);
+        osc.connect(g).connect(master);
+        osc.start(time);
+        osc.stop(time + beat);
+      }
+
+      function scheduleLeadSynth(time, freq) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = (style === "Trance" || style === "EDM") ? "sawtooth" : "triangle";
+        osc.frequency.setValueAtTime(freq, time);
+        g.gain.setValueAtTime(0.0001, time);
+        g.gain.linearRampToValueAtTime(0.25, time + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, time + beat*0.5);
+        osc.connect(g).connect(master);
+        osc.start(time);
+        osc.stop(time + beat*0.5);
+      }
+
+      let tBar = start;
+      let stepIdx = 0;
+
+      for (let b = 0; b < bars; b++) {
+        const k = (patt.kick[style] || patt.kick.default);
+        const s = (patt.snare[style] || patt.snare.default);
+        const h = (patt.hihat[style] || patt.hihat.default);
+
+        for (let sIdx = 0; sIdx < stepsPerBar; sIdx++) {
+          const t = tBar + sIdx * stepDur;
+          if (k[sIdx]) { kick ? playSample(kick, t, { gain: 1 }) : scheduleKickSynth(t); }
+          if (s[sIdx]) { snare ? playSample(snare, t, { gain: 0.9 }) : scheduleKickSynth(t + 0.01); }
+          if (h[sIdx]) { hihat ? playSample(hihat, t, { gain: 0.6 }) : scheduleHatSynth(t); }
+          if (sIdx % 4 === 0) {
+            const bassFreq = scale[(stepIdx + sIdx) % scale.length];
+            bass ? playSample(bass, t, { gain: 0.9 }) : scheduleBassSynth(t, bassFreq);
+          }
+          if (sIdx % 2 === 0) {
+            const f = scale[(stepIdx + sIdx + 2) % scale.length];
+            scheduleLeadSynth(t, f);
+          }
+        }
+        tBar += beat * 4;
+        stepIdx += 1;
+      }
+
+      for (let b = 0; b < bars; b++) {
+        const t = start + b * (beat * 4);
+        if (vox) playSample(vox, t, { gain: 0.9 });
+      }
+
+      if (speakLyrics && lyrics && window.speechSynthesis) {
+        const utter = new SpeechSynthesisUtterance(lyrics);
+        utter.lang = "es-ES";
+        utter.rate = clamp(bpm / 120, 0.7, 1.4);
+        window.speechSynthesis.speak(utter);
+      }
+
+      const chunks = [];
+      const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(mediaDest.stream, { mimeType: mime });
+      const blobPromise = new Promise((resolve) => {
+        recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+        recorder.onstop = async () => {
+          const blob = new Blob(chunks, { type: mime });
+          try { await ctx.close(); } catch {}
+          resolve(blob);
+        };
+      });
+
+      recorder.start();
+      setTimeout(() => { try { recorder.stop(); } catch {} }, Math.ceil((endTime - ctx.currentTime) * 1000) + 50);
+
+      const blob = await blobPromise;
+      const url = URL.createObjectURL(blob);
+      return { blob, url, meta: { mime, durationSec, bpm, style } };
+    }
+
+    // ====== App ======
+    function App() {
+      const [prompt, setPrompt]   = React.useState("Melodía enérgica, vibes 2000, vamos venga dale ✨");
+      const [lyrics, setLyrics]   = React.useState("vamos, venga, dale — rompe la pista!");
+      const [speakLyrics, setSpeakLyrics] = React.useState(false);
+      const [style, setStyle]     = React.useState("Bumping 2000");
+      const [bpm, setBpm]         = React.useState(150);
+      const [duration, setDuration] = React.useState(12);
+      const [seed, setSeed]       = React.useState(42);
+
+      const [isGenerating, setIsGenerating] = React.useState(false);
+      const [progress, setProgress]   = React.useState(0);
+      const [audioURL, setAudioURL]   = React.useState("");
+      const [tracks, setTracks]       = React.useState([]);
+      const progRef = React.useRef(null);
+
+      const [kickFile, setKickFile]   = React.useState(null);
+      const [snareFile, setSnareFile] = React.useState(null);
+      const [hihatFile, setHihatFile] = React.useState(null);
+      const [bassFile, setBassFile]   = React.useState(null);
+      const [voxFile, setVoxFile]     = React.useState(null);
+      const [decoded, setDecoded]     = React.useState({ kick:null, snare:null, hihat:null, bass:null, vox:null });
+
+      React.useEffect(() => () => { if (audioURL) URL.revokeObjectURL(audioURL); }, [audioURL]);
+
+      React.useEffect(() => { (async () => {
+        const [k,s,h,b,v] = await Promise.all([
+          decodeSample(kickFile),
+          decodeSample(snareFile),
+          decodeSample(hihatFile),
+          decodeSample(bassFile),
+          decodeSample(voxFile),
+        ]);
+        setDecoded({ kick:k, snare:s, hihat:h, bass:b, vox:v });
+      })(); }, [kickFile, snareFile, hihatFile, bassFile, voxFile]);
+
+      const [credits, setCredits] = React.useState(() => {
+        const saved = localStorage.getItem("demo_credits");
+        return saved ? Number(saved) : 20;
+      });
+      const [plan, setPlan] = React.useState(() => {
+        const saved = localStorage.getItem("demo_plan");
+        return (saved === "pro" || saved === "ultimate" || saved === "free") ? saved : "free";
+      });
+      React.useEffect(() => { localStorage.setItem("demo_credits", String(credits)); }, [credits]);
+      React.useEffect(() => { localStorage.setItem("demo_plan", plan); }, [plan]);
+
+      React.useEffect(() => {
+        const key = `demo_lastCreditUpdate_${plan}`;
+        const last = localStorage.getItem(key);
+        const now = Date.now();
+        const oneMonth = 1000 * 60 * 60 * 24 * 30;
+        if (!last || now - Number(last) > oneMonth) {
+          setCredits(c => c + PLANS[plan].monthlyCredits);
+          localStorage.setItem(key, String(now));
+        }
+      }, [plan]);
+
+      async function handleGenerate(e) {
+        e?.preventDefault();
+        if (isGenerating) return;
+        if (credits < CREDITS_PER_SONG) {
+          alert(`No tienes suficientes créditos. Necesitas ${CREDITS_PER_SONG} y te quedan ${credits}.`);
+          return;
+        }
+        setIsGenerating(true);
+        setProgress(0);
+        setAudioURL("");
+
+        const start = performance.now();
+        const est = Math.max(2500, duration * 1000 + 600);
+        const tick = (now) => {
+          const p = clamp(((now - start) / est) * 100, 0, 99);
+          setProgress(p);
+          progRef.current = requestAnimationFrame(tick);
+        };
+        progRef.current = requestAnimationFrame(tick);
+
+        const bpmJitter = ((seed % 7) - 3) * 0.7;
+        const res = await renderTrackWithWebAudio({
+          durationSec: duration,
+          bpm: clamp(Number(bpm) + bpmJitter, 60, 200),
+          style,
+          samples: decoded,
+          lyrics,
+          speakLyrics,
+        });
+
+        if (progRef.current) cancelAnimationFrame(progRef.current);
+        setProgress(100);
+        setAudioURL(res.url);
+        setIsGenerating(false);
+
+        setCredits(c => Math.max(0, c - CREDITS_PER_SONG));
+
+        setTracks(prev => [{
+          id: Date.now().toString(),
+          url: res.url,
+          createdAt: new Date().toISOString(),
+          meta: res.meta,
+          prompt,
+          lyrics,
+          style,
+        }, ...prev].slice(0,6));
+      }
+
+      const genreOptions = ["Bumping 2000","Trance","LoFi","Pop","Hardbass","Deep House","Electronica","EDM","Techno","Drum & Bass","Trap","Reggaeton","Synthwave"];
+
+      return (
+        <div className="min-h-screen flex flex-col items-center px-4 py-8">
+          <div className="max-w-5xl w-full">
+            <header className="mb-6">
+              <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">Generador musical de prueba</h1>
+              <p className="text-neutral-400 mt-1">Lyrics + Samples + Estilos • Créditos y Planes • 100% en navegador</p>
+            </header>
+
+            <section className="mb-6 grid gap-4 md:grid-cols-12">
+              <div className="md:col-span-5 p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+                <h3 className="text-lg font-semibold">Créditos</h3>
+                <p className="text-neutral-400 text-sm mt-1">Coste por canción: <b>{CREDITS_PER_SONG}</b> créditos.</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="text-2xl font-bold">{credits}</div>
+                  <span className="text-neutral-400">créditos disponibles</span>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button type="button" onClick={() => setCredits(c=>c+10)} className="rounded-xl px-3 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-sm">+10 (demo)</button>
+                  <button type="button" onClick={() => setCredits(c=>c+50)} className="rounded-xl px-3 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-sm">+50 (demo)</button>
+                </div>
+                <p className="text-xs text-neutral-500 mt-2">Los créditos se descuentan al finalizar un render exitoso.</p>
+              </div>
+
+              <div className="md:col-span-7 p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+                <h3 className="text-lg font-semibold">Planes</h3>
+                <div className="mt-3 grid sm:grid-cols-2 gap-3">
+                  <div className={\`p-3 rounded-xl border \${plan==='pro'?'border-emerald-500 bg-emerald-500/10':'border-neutral-700 bg-neutral-950'}\`}>
+                    <div className="flex items-baseline justify-between">
+                      <div className="font-semibold">Pro</div>
+                      <div className="text-xl">10€<span className="text-sm text-neutral-400">/mes</span></div>
+                    </div>
+                    <ul className="mt-2 text-sm text-neutral-300 list-disc ml-5">
+                      <li>2.500 créditos mensuales (~500 canciones)</li>
+                      <li>Soporte prioritario (demo)</li>
+                    </ul>
+                    <button type="button" onClick={()=> setPlan('pro')} className="mt-3 w-full rounded-lg px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-medium">{plan==='pro'?'Plan activo':'Elegir Pro'}</button>
+                  </div>
+                  <div className={\`p-3 rounded-xl border \${plan==='ultimate'?'border-emerald-500 bg-emerald-500/10':'border-neutral-700 bg-neutral-950'}\`}>
+                    <div className="flex items-baseline justify-between">
+                      <div className="font-semibold">Ultimate</div>
+                      <div className="text-xl">30€<span className="text-sm text-neutral-400">/mes</span></div>
+                    </div>
+                    <ul className="mt-2 text-sm text-neutral-300 list-disc ml-5">
+                      <li>9.000 créditos mensuales (~1.800 canciones)</li>
+                      <li>Límites ampliados (demo)</li>
+                    </ul>
+                    <button type="button" onClick={()=> setPlan('ultimate')} className="mt-3 w-full rounded-lg px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-medium">{plan==='ultimate'?'Plan activo':'Elegir Ultimate'}</button>
+                  </div>
+                </div>
+                <p className="text-xs text-neutral-400 mt-2">En esta demo los planes añaden créditos mensuales automáticamente.</p>
+              </div>
+            </section>
+
+            <form onSubmit={handleGenerate} className="grid gap-4 md:grid-cols-12 items-start">
+              <label className="md:col-span-12">
+                <span className="text-sm text-neutral-300">Prompt</span>
+                <textarea value={prompt} onChange={(e)=>setPrompt(e.target.value)} rows={2}
+                  placeholder="Describe la pista (estilo, instrumentos, energía, BPM, duración...)"
+                  className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              </label>
+
+              <label className="md:col-span-12">
+                <span className="text-sm text-neutral-300">Lyrics (TTS para pre-escucha)</span>
+                <textarea value={lyrics} onChange={(e)=>setLyrics(e.target.value)} rows={2}
+                  placeholder="Escribe frases: vamos, venga, dale…"
+                  className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3" />
+                <label className="mt-2 flex items-center gap-2 text-sm text-neutral-300">
+                  <input type="checkbox" checked={speakLyrics} onChange={(e)=> setSpeakLyrics(e.target.checked)} />
+                  Leer lyrics con voz sintética (no exporta al archivo)
+                </label>
+              </label>
+
+              <div className="md:col-span-4">
+                <span className="text-sm text-neutral-300">Género / Estilo</span>
+                <select value={style} onChange={(e)=>setStyle(e.target.value)}
+                        className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3">
+                  {genreOptions.map(g=> <option key={g}>{g}</option>)}
+                </select>
+              </div>
+
+              <div className="md:col-span-3">
+                <span className="text-sm text-neutral-300">BPM</span>
+                <input type="number" value={bpm} min={60} max={200} onChange={(e)=>setBpm(Number(e.target.value))}
+                  className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3" />
+              </div>
+
+              <div className="md:col-span-3">
+                <span className="text-sm text-neutral-300">Duración (s)</span>
+                <select value={duration} onChange={(e)=>setDuration(Number(e.target.value))}
+                        className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3">
+                  <option value={8}>8</option>
+                  <option value={12}>12</option>
+                  <option value={20}>20</option>
+                  <option value={30}>30</option>
+                </select>
+              </div>
+
+              <div className="md:col-span-2">
+                <span className="text-sm text-neutral-300">Seed</span>
+                <input type="number" value={seed} onChange={(e)=>setSeed(Number(e.target.value))}
+                  className="mt-1 w-full rounded-2xl bg-neutral-900 border border-neutral-800 p-3" />
+              </div>
+
+              <div className="md:col-span-12 grid md:grid-cols-5 gap-3">
+                <label className="block">
+                  <span className="text-sm text-neutral-300">Kick (WAV/MP3)</span>
+                  <input type="file" accept="audio/*" onChange={(e)=>setKickFile(e.target.files?.[0]||null)} className="mt-1 w-full text-sm" />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-neutral-300">Snare/Clap</span>
+                  <input type="file" accept="audio/*" onChange={(e)=>setSnareFile(e.target.files?.[0]||null)} className="mt-1 w-full text-sm" />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-neutral-300">Hi-hat</span>
+                  <input type="file" accept="audio/*" onChange={(e)=>setHihatFile(e.target.files?.[0]||null)} className="mt-1 w-full text-sm" />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-neutral-300">Bajo (one-shot/loop)</span>
+                  <input type="file" accept="audio/*" onChange={(e)=>setBassFile(e.target.files?.[0]||null)} className="mt-1 w-full text-sm" />
+                </label>
+                <label className="block">
+                  <span className="text-sm text-neutral-300">Vox (shouts/one-shot)</span>
+                  <input type="file" accept="audio/*" onChange={(e)=>setVoxFile(e.target.files?.[0]||null)} className="mt-1 w-full text-sm" />
+                </label>
+              </div>
+
+              <div className="md:col-span-12 flex gap-3 items-end">
+                <button type="submit" disabled={isGenerating || credits < CREDITS_PER_SONG}
+                        className={\`rounded-2xl px-5 py-3 font-semibold shadow-sm transition \${isGenerating ? "bg-neutral-800 text-neutral-400" : "bg-emerald-500 hover:bg-emerald-400 text-neutral-950"}\`}>
+                  {isGenerating ? "Generando…" : \`Generar pista de prueba (\${CREDITS_PER_SONG} créditos)\`}
+                </button>
+                <button type="button" onClick={() => { setTracks([]); setAudioURL(""); setProgress(0); }}
+                        className="rounded-2xl px-4 py-3 font-medium bg-neutral-800 hover:bg-neutral-700 border border-neutral-700">
+                  Limpiar
+                </button>
+              </div>
+            </form>
+
+            <div className="mt-6">
+              <div className="h-3 w-full bg-neutral-900 rounded-full overflow-hidden border border-neutral-800">
+                <div className="h-full bg-emerald-500" style={{ width: \`\${progress}%\` }} />
+              </div>
+              <div className="mt-2 text-sm text-neutral-400">
+                {isGenerating ? \`Procesando (\${progress.toFixed(0)}%)…\` : (progress === 100 && audioURL ? "Listo" : "Esperando entrada")}
+              </div>
+            </div>
+
+            {audioURL && (
+              <div className="mt-6 p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+                <h2 className="text-lg font-semibold mb-2">Resultado</h2>
+                <audio controls src={audioURL} className="w-full" />
+                <div className="mt-3 flex flex-wrap gap-3 items-center">
+                  <a href={audioURL} download={\`demo-\${Date.now()}.webm\`} className="underline text-emerald-400 hover:text-emerald-300">Descargar</a>
+                  <span className="text-sm text-neutral-400">Formato: webm/opus • Previsualización local</span>
+                  {(kickFile||snareFile||hihatFile||bassFile||voxFile) && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">Usando samples</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-8">
+              <h3 className="text-xl font-bold mb-3">Historial (local)</h3>
+              {tracks.length === 0 ? (
+                <p className="text-neutral-400">Cuando generes pistas, aparecerán aquí.</p>
+              ) : (
+                <ul className="grid md:grid-cols-2 gap-4">
+                  {tracks.map((t) => (
+                    <li key={t.id} className="p-4 rounded-2xl bg-neutral-900 border border-neutral-800">
+                      <div className="text-sm text-neutral-400">{new Date(t.createdAt).toLocaleString()}</div>
+                      <div className="mt-1 text-neutral-200 line-clamp-2">{t.prompt}</div>
+                      {t.lyrics && <div className="mt-1 text-sm text-emerald-300 line-clamp-2">“{t.lyrics}”</div>}
+                      <div className="mt-1 text-sm text-neutral-400">{t.meta?.style} • {t.meta?.bpm} BPM • {t.meta?.durationSec}s</div>
+                      <audio controls src={t.url} className="mt-2 w-full" />
+                      <a href={t.url} download={\`demo-\${t.id}.webm\`} className="mt-2 inline-block underline text-emerald-400 hover:text-emerald-300">Descargar</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <section className="mt-10 p-4 rounded-2xl bg-neutral-900 border border-neutral-800 text-sm text-neutral-300">
+              <h4 className="text-neutral-100 font-semibold mb-2">¿Dónde pongo los sonidos?</h4>
+              <ol className="list-decimal ml-5 space-y-2">
+                <li>Sube tus one-shots o loops (WAV/MP3) en los campos de carga: kick, snare, hi-hat, bajo y vox.</li>
+                <li>Si dejas alguno vacío, se usa un pequeño sintetizador de respaldo.</li>
+                <li>Las lyrics se pueden pre-escuchar con TTS marcando “Leer lyrics”.</li>
+              </ol>
+              <p className="mt-2 text-neutral-400">Demo local. Para IA real habría que conectar una API/modelo.</p>
+            </section>
+
+            <footer className="mt-6 text-xs text-neutral-500">
+              ⚠️ Demo local para previsualizar. Funciona mejor bajo HTTPS (GitHub Pages lo proporciona).
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
