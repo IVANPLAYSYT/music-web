@@ -56,7 +56,7 @@
       master.connect(duck).connect(limiter);
       const mediaDest=ctx.createMediaStreamDestination(); limiter.connect(mediaDest); limiter.connect(ctx.destination);
 
-      function makeBus({hp=0,lp=0,gain=1}){ const g=ctx.createGain(); g.gain.value=gain; const hpF=ctx.createBiquadFilter(); hpF.type="highpass"; hpF.frequency.value=hp; const lpF=ctx.createBiquadFilter(); lpf.frequency.value = lp || 20000; g.connect(hpF).connect(lpF).connect(master); return {in:g,hp:hpF,lp:lpF}; }
+      function makeBus({hp=0,lp=0,gain=1}){const g=ctx.createGain();g.gain.value=gain;const hpF=ctx.createBiquadFilter();hpF.type="highpass";hpF.frequency.value=hp;const lpF=ctx.createBiquadFilter();lpF.type="lowpass";lpF.frequency.value=lp||20000;g.connect(hpF).connect(lpF).connect(master);return{in:g,hp:hpF,lp:lpF};}
       const busDrums=makeBus({hp:20,lp:18000,gain:1}); const busBass=makeBus({hp:20,lp:900,gain:0.95}); const busLead=makeBus({hp:150,lp:16000,gain:0.85}); const busFX=makeBus({hp:200,lp:16000,gain:0.6});
       const beat=60/clamp(bpm,60,200); const stepsPerBar=STEPS_PER_BAR; const stepDur=(beat*4)/stepsPerBar; const rng=makeRng(Math.floor((Math.abs(bpm)+style.length)*1000)); const scale=SCALES[style]||SCALES["Bumping 2000"];
 
