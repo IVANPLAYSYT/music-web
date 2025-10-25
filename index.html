@@ -1,0 +1,25 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎵 IVANPLAYS Music Web 🎶 Create your sound</title>
+</head>
+<body>
+  <script>
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const master = ctx.createGain();
+  const limiter = ctx.createDynamicsCompressor();
+  master.connect(limiter);
+
+  const mediaDest=ctx.createMediaStreamDestination();limiter.connect(mediaDest);limiter.connect(ctx.destination);
+  function makeBus({hp=0,lp=0,gain=1}){const g=ctx.createGain();g.gain.value=gain;const hpF=ctx.createBiquadFilter();hpF.type="highpass";hpF.frequency.value=hp;const lpF=ctx.createBiquadFilter();lpF.type="lowpass";lpF.frequency.value=lp||20000;g.connect(hpF).connect(lpF).connect(master);return{in:g,hp:hpF,lp:lpF};}
+  const busDrums=makeBus({hp:20,lp:18000,gain:1});const busBass=makeBus({hp:20,lp:900,gain:0.95});const busLead=makeBus({hp:150,lp:16000,gain:0.85});const busFX=makeBus({hp:200,lp:16000,gain:0.6});
+  function duckOn(time){duck.gain.cancelScheduledValues(time);duck.gain.setValueAtTime(duck.gain.value,time);duck.gain.linearRampToValueAtTime(0.6,time+0.005);duck.gain.exponentialRampToValueAtTime(1.0,time+0.22);}
+  const bpm=140;function clamp(v,min,max){return Math.min(Math.max(v,min),max);}const STEPS_PER_BAR=16;function makeRng(seed){let s=seed;return()=>{s=(s*16807)%2147483647;return s/2147483647;}}const SCALES={"Bumping 2000":[0,2,4,5,7,9,11],"Hardbass":[0,3,5,7,10],"EDM":[0,2,3,7,9],"Deep House":[0,2,5,7,9]};
+  const style="Bumping 2000";const beat=60/clamp(bpm,60,200);const stepsPerBar=STEPS_PER_BAR;const stepDur=(beat*4)/stepsPerBar;const rng=makeRng(Math.floor((Math.abs(bpm)+style.length)*1000));const scale=SCALES[style]||SCALES["Bumping 2000"];
+  console.log("IVANPLAYS Music Web ready!");
+  </script>
+</body>
+</html>
